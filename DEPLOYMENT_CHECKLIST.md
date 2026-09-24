@@ -1,12 +1,14 @@
 # Deployment checklist
 
-1. Upload/extract this repository on the `Develop` branch.
-2. Create a Python venv and install `requirements.txt`.
-3. Copy `.env.example` to `.env`; never commit `.env`.
-4. Keep `LIVE_TRADING=false`.
-5. Run `chmod +x bot && ./bot test`.
-6. Configure the real WebSocket URL/auth.
-7. Capture one real incoming payload and finalize normalization.
-8. Verify current Dhan API/order fields and instrument master before implementing live execution.
-9. Test equity and F&O resolution without live placement.
-10. Configure systemd only after the above checks pass.
+1. Work on lowercase `develop`; keep `main` untouched.
+2. Create venv, install requirements, create local `.env` from `.env.example`.
+3. Keep `LIVE_TRADING=false`.
+4. Run `chmod +x bot && ./bot test`.
+5. Configure the real WebSocket URL/auth only in `.env`.
+6. Run `./bot capture` to capture exactly one real message without loading Dhan execution.
+7. Map the captured schema into normalization/parser logic.
+8. Verify current Dhan order API and instrument-master schema before implementing broker execution.
+9. Implement/test equity resolution, then exact F&O expiry/strike/lot/tick resolution.
+10. Add Telegram commands/status and restart recovery checks.
+11. Install systemd only after all no-order tests pass.
+12. Enable live trading only for a controlled broker test after the execution path is reviewed.

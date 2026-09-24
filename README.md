@@ -1,23 +1,23 @@
 # Algo-Trader-1
 
-WebSocket → validation/dedup → trading engine → Dhan framework.
+External WebSocket → validation/normalization → SQLite dedupe/recovery → trading engine → Dhan.
+Telegram Bot API is monitoring/operations only; it is not the trade-signal source.
 
-## Current safety state
-Live execution is intentionally locked. Keep `LIVE_TRADING=false` until the real WebSocket payload, current Dhan order fields, and instrument/F&O mapping are verified.
+## Current milestone
+The transport, state journal, duplicate protection, safe capture utility, monitoring boundary, and execution gate are implemented. Dhan live placement and exact F&O resolution remain intentionally locked until the actual upstream WebSocket payload and current Dhan API/instrument schema are verified.
 
-## Architecture
-External WebSocket → `main.py` → normalization → SQLite dedupe/recovery → `TradingEngine` → Dhan boundary.
-
-Telegram is operations/monitoring only, not a signal source.
-
-## VM quick start
+## Safe first run
 ```bash
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
 nano .env
+chmod +x bot
 ./bot test
+./bot capture
 ```
 
-Secrets and runtime state (`.env`, SQLite DB, runtime files) are excluded from Git.
+`./bot capture` receives exactly one raw upstream WebSocket message and writes it to `runtime/captured_ws_payload.txt`. It imports no Dhan broker module and cannot place an order.
+
+Never commit `.env`, broker credentials, Telegram tokens, captured runtime payloads, or SQLite databases.

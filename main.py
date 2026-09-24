@@ -1,54 +1,69 @@
-import asyncio, json, logging, os
-import websockets
-from dotenv import load_dotenv
+import asyncio
+import json
+import logging
+
+from config import Settings
 from dhan import DhanBroker
 from ops import TelegramOps
 from state import StateStore
 from trading_engine import TradingEngine, normalize_signal
+from ws_client import connect_messages
 
-load_dotenv()
-logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(name)s %(message)s")
-log = logging.getLogger("algo-trader")
 
-def env_bool(name: str, default: bool = False) -> bool:
-    return os.getenv(name, str(default)).lower() in {"1", "true", "yes", "on"}
+async def run() -> None:
+    settings = Settings.from_env()
+    logging.basicConfig(level=getattr(logging, settings.log_level, logging.INFO),
+                        format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    log = logging.getLogger("algo-trader")
+    if not settings.websocket_url:
+        raise RuntimeError("WEBSOCKET_URL is required")
 
-async def run():
-    ws_url = os.getenv("WEBSOCKET_URL", "").strip()
-    if not ws_url: raise RuntimeError("WEBSOCKET_URL is required")
-    live = env_bool("LIVE_TRADING", False)
-    store = StateStore(os.getenv("DB_PATH", "runtime/darvas.db"))
-    ops = TelegramOps(os.getenv("TELEGRAM_BOT_TOKEN", ""), os.getenv("TELEGRAM_CHAT_ID", ""))
-    broker = DhanBroker(os.getenv("DHAN_CLIENT_ID", ""), os.getenv("DHAN_ACCESS_TOKEN", ""))
-    engine = TradingEngine(broker, live=live)
-    headers = {}
-    token = os.getenv("WEBSOCKET_AUTH_TOKEN", "").strip()
-    if token: headers["Authorization"] = f"Bearer {token}"
-    await ops.notify(f"BOT STARTED | live={live}")
+    store = StateStore(settings.db_path)
+    ops = TelegramOps(settings.telegram_bot_token, settings.telegram_chat_id)
+    broker = DhanBroker(settings.dhan_client_id, settings.dhan_access_token)
+    engine = TradingEngine(broker, live=settings.live_trading)
+    await ops.notify(f"BOT STARTED | live={settings.live_trading}")
+
     delay = 2
     while True:
         try:
-            async with websockets.connect(ws_url, additional_headers=headers or None, ping_interval=20, ping_timeout=20) as ws:
-                delay = 2; log.info("WEBSOCKET CONNECTED"); await ops.notify("WEBSOCKET CONNECTED")
-                async for raw in ws:
-                    log.info("[SIGNAL] Received")
+            connected = False
+            async for raw in connect_messages(settings.websocket_url, settings.websocket_auth_token):
+                if not connected:
+                    connected = True
+                    delay = 2
+                    log.info("WEBSOCKET CONNECTED")
+                    await ops.notify("WEBSOCKET CONNECTED")
+                try:
+                    text = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else raw
+                    payload = json.loads(text)
+                    if not isinstance(payload, dict):
+                        raise ValueError("payload must be JSON object")
+                    signal = normalize_signal(payload)
+                    if store.seen(signal.signal_id):
+                        log.info("[BLOCKED] DUPLICATE %s", signal.signal_id)
+                        continue
+                    store.record(signal.signal_id, payload)
+                    log.info("[SIGNAL] %s %s %s", signal.signal_id, signal.segment, signal.symbol)
                     try:
-                        payload = json.loads(raw)
-                        if not isinstance(payload, dict): raise ValueError("payload must be JSON object")
-                        signal = normalize_signal(payload)
-                        if store.seen(signal.signal_id):
-                            log.info("[BLOCKED] DUPLICATE %s", signal.signal_id); continue
-                        store.record(signal.signal_id, payload)
-                        log.info("[EXECUTING] %s %s", signal.segment, signal.symbol)
                         result = await engine.execute(signal)
-                        store.set_status(signal.signal_id, result.get("status", "UNKNOWN"))
-                        await ops.notify(f"{result.get('status')} | {signal.segment} | {signal.symbol} | {signal.signal_id}")
                     except Exception as exc:
-                        log.exception("[ERROR] processing signal"); await ops.notify(f"EXECUTION ERROR | {type(exc).__name__}: {exc}")
-        except asyncio.CancelledError: raise
+                        store.set_status(signal.signal_id, "ERROR", str(exc))
+                        raise
+                    store.set_status(signal.signal_id, result.get("status", "UNKNOWN"))
+                    await ops.notify(f"{result.get('status')} | {signal.segment} | {signal.symbol} | {signal.signal_id}")
+                except Exception as exc:
+                    log.exception("[ERROR] processing signal")
+                    await ops.notify(f"EXECUTION ERROR | {type(exc).__name__}: {exc}")
+            raise ConnectionError("WebSocket closed")
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:
             log.warning("WEBSOCKET DISCONNECTED: %s; reconnecting in %ss", exc, delay)
             await ops.notify(f"WEBSOCKET DISCONNECTED | reconnect in {delay}s")
-            await asyncio.sleep(delay); delay = min(delay * 2, 60)
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 60)
 
-if __name__ == "__main__": asyncio.run(run())
+
+if __name__ == "__main__":
+    asyncio.run(run())

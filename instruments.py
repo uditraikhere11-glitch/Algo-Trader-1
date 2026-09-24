@@ -9,6 +9,6 @@ class Instrument:
     tick_size: float = 0.05
 
 class InstrumentResolver:
-    """Boundary for Dhan master and exact F&O contract resolution."""
+    """Boundary for Dhan instrument master and exact F&O contract resolution."""
     def resolve(self, symbol: str, segment: str) -> Instrument:
         raise LookupError(f"Instrument master not loaded for {segment}:{symbol}")

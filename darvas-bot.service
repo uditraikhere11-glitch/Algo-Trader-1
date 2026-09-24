@@ -1,0 +1,17 @@
+[Unit]
+Description=Algo Trader WebSocket to Dhan
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=CHANGE_ME
+WorkingDirectory=/home/CHANGE_ME/Algo-Trader-1
+EnvironmentFile=/home/CHANGE_ME/Algo-Trader-1/.env
+ExecStart=/home/CHANGE_ME/Algo-Trader-1/venv/bin/python main.py
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
